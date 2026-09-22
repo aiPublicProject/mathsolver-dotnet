@@ -145,7 +145,7 @@ Rules:
             {
                 int open = body.IndexOf('[', s), close = body.IndexOf(']', open);
                 if (open >= 0 && close > open)
-                    foreach (Match m in Regex.Matches(body.Substring(open, close - open), @""((?:[^""\\]|\\.)*)""))
+                    foreach (Match m in Regex.Matches(body.Substring(open, close - open), @"((?:[^""\\]|\\.)*)"))
                         p.Steps.Add(m.Groups[1].Value);
             }
             return p;
