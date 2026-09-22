@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 
 namespace Mathsolver
 {
-    /// <summary>BYOK AI math solver with independent verification.</summary>
+    /// <summary>BYOK AI math solver utilities: local expression evaluation + strict-JSON protocol helpers.</summary>
     public static class Solver
     {
         public const string SystemPrompt = @"You are a precise math solver.
@@ -41,6 +41,8 @@ Rules:
 
         public delegate string Transport(string url, string bodyJson, string apiKey);
 
+        internal sealed class Parsed { public double Answer; public List<string> Steps = new(); public string Expression = ""; }
+
         /* ---------------- expression evaluator ---------------- */
 
         private static readonly Regex TokenRe = new(
@@ -62,37 +64,38 @@ Rules:
                 else tokens.Add(new object[] { m.Groups["op"].Value, null });
             }
             if (src.Substring(covered).Trim().Length > 0) throw new SolverException("EXPR_BAD_CHAR", "unexpected character");
+
             int pos = 0;
-            double Expr() { double v = Term(); while (pos < tokens.Count && IsOp(tokens[pos], "+", "-")) { var op = (string)tokens[pos++][0]; double r = Term(); v = op == "+" ? v + r : v - r; } return v; }
-            double Term() { double v = Unary(); while (pos < tokens.Count && IsOp(tokens[pos], "*", "/", "%")) { var op = (string)tokens[pos++][0]; double r = Unary(); v = op == "*" ? v * r : (op == "/" ? v / r : v % r); } return v; }
-            double Unary() { if (IsOp(tokens, ref pos, "-")) { return -Unary(); } if (IsOp(tokens, ref pos, "+")) return Unary(); return Power(); }
-            double Power() { double b = Atom(); if (pos < tokens.Count && IsOp(tokens[pos], "^")) { pos++; return Math.Pow(b, Unary()); } return b; }
+            object[] Next() { if (pos >= tokens.Count) throw new SolverException("EXPR_SYNTAX", "expected more tokens"); return tokens[pos++]; }
+            object[]? Peek() { return pos < tokens.Count ? tokens[pos] : null; }
+            bool Op(string op) { var t = Peek(); if (t != null && (string)t[0] == op) { pos++; return true; } return false; }
+            void Expect(string op) { var t = Next(); if ((string)t[0] != op) throw new SolverException("EXPR_SYNTAX", "expected " + op); }
+
+            double Expr() { double v = Term(); while (true) { if (Op("+")) v += Term(); else if (Op("-")) v -= Term(); else return v; } }
+            double Term() { double v = Unary(); while (true) { if (Op("*")) v *= Unary(); else if (Op("/")) v /= Unary(); else if (Op("%")) v %= Unary(); else return v; } }
+            double Unary() { if (Op("-")) return -Unary(); if (Op("+")) return Unary(); return Power(); }
+            double Power() { double b = Atom(); if (Op("^")) return Math.Pow(b, Unary()); return b; }
             double Atom()
             {
-                if (pos >= tokens.Count) throw new SolverException("EXPR_SYNTAX", "expected more tokens");
-                var t = tokens[pos++];
+                var t = Next();
                 if ((string)t[0] == "num") return (double)t[1];
                 if ((string)t[0] == "id")
                 {
                     var name = ((string)t[1]).ToLowerInvariant();
-                    if (pos < tokens.Count && IsOp(tokens[pos], "("))
+                    if (Op("("))
                     {
-                        pos++;
                         var args = new List<double> { Expr() };
-                        while (pos < tokens.Count && IsOp(tokens[pos], ",")) { pos++; args.Add(Expr()); }
-                        Expect(tokens, ref pos, ")");
+                        while (Op(",")) args.Add(Expr());
+                        Expect(")");
                         return ApplyFn(name, args);
                     }
                     if (name == "pi") return Math.PI;
                     if (name == "e") return Math.E;
                     throw new SolverException("EXPR_UNKNOWN_ID", "unknown identifier " + name);
                 }
-                if ((string)t[0] == "(") { double v = Expr(); Expect(tokens, ref pos, ")"); return v; }
+                if ((string)t[0] == "(") { double v = Expr(); Expect(")"); return v; }
                 throw new SolverException("EXPR_SYNTAX", "unexpected token " + t[0]);
             }
-            bool IsOp(object[] tok, params string[] ops) => ops.Contains((string)tok[0]);
-            bool IsOp(List<object[]> toks, ref int p, string op) { if (p < toks.Count && (string)toks[p][0] == op) { p++; return true; } return false; }
-            void Expect(List<object[]> toks, ref int p, string op) { if (p >= toks.Count || (string)toks[p++][0] != op) throw new SolverException("EXPR_SYNTAX", "expected " + op); }
 
             double value = Expr();
             if (pos != tokens.Count) throw new SolverException("EXPR_TRAILING", "trailing tokens");
@@ -124,8 +127,6 @@ Rules:
 
         /* ---------------- JSON ---------------- */
 
-        internal sealed class Parsed { public double Answer; public List<string> Steps = new(); public string Expression = ""; }
-
         private static readonly Regex AnswerRe = new(@"""answer""\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)", RegexOptions.Compiled);
         private static readonly Regex ExprRe = new(@"""expression""\s*:\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
 
@@ -144,7 +145,7 @@ Rules:
             {
                 int open = body.IndexOf('[', s), close = body.IndexOf(']', open);
                 if (open >= 0 && close > open)
-                    foreach (Match m in Regex.Matches(body.Substring(open, close - open), @"""((?:[^""\\]|\\.)*)"""))
+                    foreach (Match m in Regex.Matches(body.Substring(open, close - open), @""((?:[^""\\]|\\.)*)""))
                         p.Steps.Add(m.Groups[1].Value);
             }
             return p;
@@ -165,6 +166,5 @@ Rules:
             if (content == null) throw new SolverException("HTTP_ERROR", "missing message content");
             return content;
         }
-
     }
 }
