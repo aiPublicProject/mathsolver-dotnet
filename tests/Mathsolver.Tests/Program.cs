@@ -64,7 +64,7 @@ static class Program
         int calls2 = 0; threw2 = false;
         try
         {
-            Solver.Solve("1+1", "sk", "https://x", "m", (u, b, k) => { calls2++; throw new Solver.SolverException("HTTP_ERROR", "401"); });
+            new Client("sk", "https://x", "m", (u, b, k) => { calls2++; throw new Solver.SolverException("HTTP_ERROR", "401"); }).Solve("1+1");
         }
         catch (Solver.SolverException e) { threw2 = e.Code == "HTTP_ERROR"; }
         Check("http error no retry", threw2 && calls2 == 1);
