@@ -124,12 +124,12 @@ Rules:
 
         /* ---------------- JSON ---------------- */
 
-        private sealed class Parsed { public double Answer; public List<string> Steps = new(); public string Expression = ""; }
+        internal sealed class Parsed { public double Answer; public List<string> Steps = new(); public string Expression = ""; }
 
         private static readonly Regex AnswerRe = new(@"""answer""\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)", RegexOptions.Compiled);
         private static readonly Regex ExprRe = new(@"""expression""\s*:\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
 
-        private static Parsed ParseModelReply(string text)
+        internal static Parsed ParseModelReply(string text)
         {
             int start = text.IndexOf('{'), end = text.LastIndexOf('}');
             if (start < 0 || end <= start) throw new SolverException("INVALID_JSON", "no JSON object in reply");
@@ -150,7 +150,7 @@ Rules:
             return p;
         }
 
-        private static bool NumericallyEqual(double a, double b) => Math.Abs(a - b) <= 1e-6 * Math.Max(1, Math.Max(Math.Abs(a), Math.Abs(b)));
+        internal static bool NumericallyEqual(double a, double b) => Math.Abs(a - b) <= 1e-6 * Math.Max(1, Math.Max(Math.Abs(a), Math.Abs(b)));
 
         public static string DefaultTransport(string url, string bodyJson, string apiKey)
         {
@@ -166,49 +166,5 @@ Rules:
             return content;
         }
 
-        public static SolveResult Solve(string problem, string apiKey, string baseUrl = "https://api.openai.com/v1",
-            string model = "gpt-4o-mini", Transport transport = null)
-        {
-            if (string.IsNullOrEmpty(apiKey)) throw new SolverException("NO_API_KEY", "apiKey is required (BYOK)");
-            if (string.IsNullOrWhiteSpace(problem)) throw new SolverException("NO_PROBLEM", "problem must be non-empty");
-            transport ??= DefaultTransport;
-            string url = baseUrl.TrimEnd('/') + "/chat/completions";
-            var messages = new List<string[]> { new[] { "system", SystemPrompt }, new[] { "user", problem } };
-            string Call() => transport(url, JsonSerializer.Serialize(new { model, messages = messages.Select(m => new { role = m[0], content = m[1] }), temperature = 0 }), apiKey);
-
-            Parsed parsed;
-            try { parsed = ParseModelReply(Call()); }
-            catch (SolverException e)
-            {
-                if (e.Code != "INVALID_JSON") throw;
-                messages.Add(new[] { "assistant", "invalid JSON" });
-                messages.Add(new[] { "user", "Your reply was not valid JSON. Reply again with the exact strict JSON shape." });
-                parsed = ParseModelReply(Call());
-            }
-
-            (double? ev, bool ok) Evaluate(Parsed p)
-            {
-                try { double v = EvalExpression(p.Expression); return (v, NumericallyEqual(v, p.Answer)); }
-                catch (SolverException) { return (null, false); }
-            }
-
-            var (evaluated, verified) = Evaluate(parsed);
-            int retries = 0;
-            if (!verified)
-            {
-                retries = 1;
-                messages.Add(new[] { "user", $"Your verification expression evaluated to {evaluated?.ToString() ?? "an error"}, which does not match your answer {parsed.Answer}. Re-derive carefully and reply again with the same strict JSON shape." });
-                try
-                {
-                    var second = ParseModelReply(Call());
-                    var (ev2, ok2) = Evaluate(second);
-                    if (ev2 != null) evaluated = ev2;
-                    if (ok2) { parsed = second; verified = true; }
-                }
-                catch (SolverException) { }
-            }
-
-            return new SolveResult { Answer = parsed.Answer, Steps = parsed.Steps, Expression = parsed.Expression, Evaluated = evaluated, Verified = verified, Retries = retries };
-        }
     }
 }

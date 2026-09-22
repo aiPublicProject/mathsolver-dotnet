@@ -32,28 +32,34 @@ static class Program
             Check("rejects <" + bad + ">", threw);
         }
 
+        bool threwInit = false;
+        try { new Client(""); } catch (Solver.SolverException e) { threwInit = e.Code == "NO_API_KEY"; }
+        Check("NO_API_KEY at construct", threwInit);
+        threwInit = false;
+        try { new Client("sk", "not-a-url"); } catch (Solver.SolverException e) { threwInit = e.Code == "BAD_BASE_URL"; }
+        Check("BAD_BASE_URL at construct", threwInit);
+
         int calls = 0; string seenUrl = null, seenKey = null;
-        var r = Solver.Solve("2x + 3 = 11, solve for x", "sk-test", "https://api.openai.com/v1", "gpt-4o-mini",
+        var solver = new Client("sk-test", "https://api.deepseek.com/v1", "deepseek-chat",
             (url, body, key) => { calls++; seenUrl = url; seenKey = key; return Wrap(Good); });
+        var r = solver.Solve("2x + 3 = 11, solve for x");
         Check("verified first try", r.Verified && r.Retries == 0 && r.Evaluated == 4 && calls == 1);
-        Check("url/key passed", seenUrl.EndsWith("/chat/completions") && seenKey == "sk-test");
+        Check("url/key passed", seenUrl == "https://api.deepseek.com/v1/chat/completions" && seenKey == "sk-test");
 
         int n = 0;
-        r = Solver.Solve("2x+3=11", "sk", "https://x", "m", (u, b, k) => { n++; return Wrap(n == 1 ? Wrong : Good); });
+        r = new Client("sk", "https://x", "m", (u, b, k) => { n++; return Wrap(n == 1 ? Wrong : Good); }).Solve("2x+3=11");
         Check("retry recovers", r.Verified && r.Retries == 1);
 
         int n2 = 0;
-        r = Solver.Solve("1+1", "sk", "https://x", "m", (u, b, k) => { n2++; return n2 == 1 ? "no json" : Wrap(Good); });
+        r = new Client("sk", "https://x", "m", (u, b, k) => { n2++; return n2 == 1 ? "no json" : Wrap(Good); }).Solve("1+1");
         Check("invalid json then ok", r.Verified);
 
         bool threw2 = false;
-        try { Solver.Solve("1+1", "sk", "https://x", "m", (u, b, k) => "nothing"); }
+        try { new Client("sk", "https://x", "m", (u, b, k) => "nothing").Solve("1+1"); }
         catch (Solver.SolverException e) { threw2 = e.Code == "INVALID_JSON"; }
         Check("invalid twice raises", threw2);
 
-        threw2 = false;
-        try { Solver.Solve("1+1", ""); } catch (Solver.SolverException e) { threw2 = e.Code == "NO_API_KEY"; }
-        Check("NO_API_KEY", threw2);
+        Check("NO_API_KEY (covered at construct)", true);
 
         int calls2 = 0; threw2 = false;
         try
@@ -63,7 +69,7 @@ static class Program
         catch (Solver.SolverException e) { threw2 = e.Code == "HTTP_ERROR"; }
         Check("http error no retry", threw2 && calls2 == 1);
 
-        r = Solver.Solve("2x+3=11", "sk", "https://x", "m", (u, b, k) => Wrap(Wrong));
+        r = new Client("sk", "https://x", "m", (u, b, k) => Wrap(Wrong)).Solve("2x+3=11");
         Check("still wrong unverified", !r.Verified && r.Retries == 1);
 
         Console.WriteLine(_failures == 0 ? "\nALL PASS" : $"\n{_failures} FAILURES");
