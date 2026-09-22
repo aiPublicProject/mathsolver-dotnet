@@ -22,7 +22,7 @@ static class Program
         {
             var base_ = Environment.GetEnvironmentVariable("SMOKE_BASE_URL") ?? "https://api.openai.com/v1";
             var smokeResult = new Client(smokeKey, base_).Solve("2x + 3 = 11, solve for x");
-            Console.WriteLine($"smoke: answer={r.Answer} verified={r.Verified} retries={r.Retries}");
+            Console.WriteLine($"smoke: answer={smokeResult.Answer} verified={smokeResult.Verified} retries={smokeResult.Retries}");
             return smokeResult.Verified && Math.Abs(smokeResult.Answer - 4) < 1e-9 ? 0 : 1;
         }
 
