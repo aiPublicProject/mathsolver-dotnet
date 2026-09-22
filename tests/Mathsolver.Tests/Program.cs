@@ -21,9 +21,9 @@ static class Program
         if (!string.IsNullOrEmpty(smokeKey))
         {
             var base_ = Environment.GetEnvironmentVariable("SMOKE_BASE_URL") ?? "https://api.openai.com/v1";
-            var r = new Client(smokeKey, base_).Solve("2x + 3 = 11, solve for x");
+            var smokeResult = new Client(smokeKey, base_).Solve("2x + 3 = 11, solve for x");
             Console.WriteLine($"smoke: answer={r.Answer} verified={r.Verified} retries={r.Retries}");
-            return r.Verified && Math.Abs(r.Answer - 4) < 1e-9 ? 0 : 1;
+            return smokeResult.Verified && Math.Abs(smokeResult.Answer - 4) < 1e-9 ? 0 : 1;
         }
 
         Check("2*3+4=10", Math.Abs(Solver.EvalExpression("2*3+4") - 10) < 1e-9);
