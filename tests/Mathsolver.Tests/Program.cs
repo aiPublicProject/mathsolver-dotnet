@@ -14,8 +14,6 @@ static class Program
     const string Good = "{\"answer\": 4, \"steps\": [\"Subtract 3: 2x = 8\", \"Divide by 2: x = 4\"], \"verification\": {\"expression\": \"(11-3)/2\"}}";
     const string Wrong = "{\"answer\": 4, \"steps\": [\"...\"], \"verification\": {\"expression\": \"(11-3)/3\"}}";
 
-    static string Wrap(string content) =>
-        "{\"choices\":[{\"message\":{\"content\":" + System.Text.Json.JsonSerializer.Serialize(content) + "}}]}";
 
     static int Main()
     {
@@ -41,17 +39,17 @@ static class Program
 
         int calls = 0; string seenUrl = null, seenKey = null;
         var solver = new Client("sk-test", "https://api.deepseek.com/v1", "deepseek-chat",
-            (url, body, key) => { calls++; seenUrl = url; seenKey = key; return Wrap(Good); });
+            (url, body, key) => { calls++; seenUrl = url; seenKey = key; return Good; });
         var r = solver.Solve("2x + 3 = 11, solve for x");
         Check("verified first try", r.Verified && r.Retries == 0 && r.Evaluated == 4 && calls == 1);
         Check("url/key passed", seenUrl == "https://api.deepseek.com/v1/chat/completions" && seenKey == "sk-test");
 
         int n = 0;
-        r = new Client("sk", "https://x", "m", (u, b, k) => { n++; return Wrap(n == 1 ? Wrong : Good); }).Solve("2x+3=11");
+        r = new Client("sk", "https://x", "m", (u, b, k) => { n++; return n == 1 ? Wrong : Good; }).Solve("2x+3=11");
         Check("retry recovers", r.Verified && r.Retries == 1);
 
         int n2 = 0;
-        r = new Client("sk", "https://x", "m", (u, b, k) => { n2++; return n2 == 1 ? "no json" : Wrap(Good); }).Solve("1+1");
+        r = new Client("sk", "https://x", "m", (u, b, k) => { n2++; return n2 == 1 ? "no json" : Good; }).Solve("1+1");
         Check("invalid json then ok", r.Verified);
 
         bool threw2 = false;
@@ -69,7 +67,7 @@ static class Program
         catch (Solver.SolverException e) { threw2 = e.Code == "HTTP_ERROR"; }
         Check("http error no retry", threw2 && calls2 == 1);
 
-        r = new Client("sk", "https://x", "m", (u, b, k) => Wrap(Wrong)).Solve("2x+3=11");
+        r = new Client("sk", "https://x", "m", (u, b, k) => Wrong).Solve("2x+3=11");
         Check("still wrong unverified", !r.Verified && r.Retries == 1);
 
         Console.WriteLine(_failures == 0 ? "\nALL PASS" : $"\n{_failures} FAILURES");
