@@ -17,6 +17,15 @@ static class Program
 
     static int Main()
     {
+        var smokeKey = Environment.GetEnvironmentVariable("SMOKE_API_KEY");
+        if (!string.IsNullOrEmpty(smokeKey))
+        {
+            var base_ = Environment.GetEnvironmentVariable("SMOKE_BASE_URL") ?? "https://api.openai.com/v1";
+            var r = new Client(smokeKey, base_).Solve("2x + 3 = 11, solve for x");
+            Console.WriteLine($"smoke: answer={r.Answer} verified={r.Verified} retries={r.Retries}");
+            return r.Verified && Math.Abs(r.Answer - 4) < 1e-9 ? 0 : 1;
+        }
+
         Check("2*3+4=10", Math.Abs(Solver.EvalExpression("2*3+4") - 10) < 1e-9);
         Check("2+3*4=14", Math.Abs(Solver.EvalExpression("2+3*4") - 14) < 1e-9);
         Check("2^3^2=512", Math.Abs(Solver.EvalExpression("2^3^2") - 512) < 1e-9);
