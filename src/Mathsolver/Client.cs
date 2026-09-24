@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Text.Json;
 
 namespace Mathsolver
@@ -17,9 +18,10 @@ namespace Mathsolver
         private readonly string _baseUrl;
         private readonly string _model;
         private readonly Solver.Transport _transport;
+        private readonly HttpClient _httpClient;
 
         public Client(string apiKey, string baseUrl = "https://api.openai.com/v1",
-                      string model = "gpt-4o-mini", Solver.Transport transport = null)
+                      string model = "gpt-4o-mini", Solver.Transport transport = null, HttpClient httpClient = null)
         {
             if (string.IsNullOrEmpty(apiKey)) throw new Solver.SolverException("NO_API_KEY", "apiKey is required (BYOK)");
             var base_ = (baseUrl ?? "https://api.openai.com/v1").TrimEnd('/');
@@ -29,14 +31,19 @@ namespace Mathsolver
             _baseUrl = base_;
             _model = string.IsNullOrEmpty(model) ? "gpt-4o-mini" : model;
             _transport = transport;
+            _httpClient = httpClient;
         }
 
-        /// <summary>Solve a math problem. Verified is true only when the model's
-        /// verification expression independently re-evaluates to the answer.</summary>
+        /// <summary>Solve a math problem. Answer is the output of executing the
+        /// model's program; Verified is true only when the check expression
+        /// ({x} substituted with the answer) evaluated to ~0.</summary>
         public Solver.SolveResult Solve(string problem)
         {
             if (string.IsNullOrWhiteSpace(problem)) throw new Solver.SolverException("NO_PROBLEM", "problem must be non-empty");
-            var tr = _transport ?? Solver.DefaultTransport;
+            Solver.Transport tr;
+            if (_transport != null) tr = _transport;
+            else if (_httpClient != null) tr = (u, b, k) => Solver.DefaultTransportWith(_httpClient, u, b, k);
+            else tr = Solver.DefaultTransport;
             string url = _baseUrl + "/chat/completions";
             var messages = new List<string[]> { new[] { "system", Solver.SystemPrompt }, new[] { "user", problem } };
             string Call() => tr(url, JsonSerializer.Serialize(new { model = _model, messages = ToAnonymous(messages), temperature = 0 }), _apiKey);
@@ -51,29 +58,54 @@ namespace Mathsolver
                 parsed = Solver.ParseModelReply(Call());
             }
 
-            (double? ev, bool ok) Evaluate(Solver.Parsed p)
+            (bool ok, double answer, double? checkValue, bool verified, Solver.SolverException err) Attempt(Solver.Parsed p)
             {
-                try { double v = Solver.EvalExpression(p.Expression); return (v, Solver.NumericallyEqual(v, p.Answer)); }
-                catch (Solver.SolverException) { return (null, false); }
-            }
-
-            var (evaluated, verified) = Evaluate(parsed);
-            int retries = 0;
-            if (!verified)
-            {
-                retries = 1;
-                messages.Add(new[] { "user", $"Your verification expression evaluated to {evaluated?.ToString() ?? "an error"}, which does not match your answer {parsed.Answer}. Re-derive carefully and reply again with the same strict JSON shape." });
                 try
                 {
-                    var second = Solver.ParseModelReply(Call());
-                    var (ev2, ok2) = Evaluate(second);
-                    if (ev2 != null) evaluated = ev2;
-                    if (ok2) { parsed = second; verified = true; }
+                    double answer = Solver.RunProgram(p.Program);
+                    double? cv = null;
+                    bool v = false;
+                    if (p.Check.Length > 0)
+                    {
+                        var (value, passed) = Solver.RunCheck(p.Check, answer);
+                        cv = value;
+                        v = passed;
+                    }
+                    return (true, answer, cv, v, null);
                 }
-                catch (Solver.SolverException) { }
+                catch (Solver.SolverException ex)
+                {
+                    return (false, 0, null, false, ex);
+                }
             }
 
-            return new Solver.SolveResult { Answer = parsed.Answer, Steps = parsed.Steps, Expression = parsed.Expression, Evaluated = evaluated, Verified = verified, Retries = retries };
+            var outcome = Attempt(parsed);
+            int retries = 0;
+            if (!outcome.ok || !outcome.verified)
+            {
+                retries = 1;
+                string reason = outcome.ok
+                    ? $"check evaluated to {outcome.checkValue} instead of 0"
+                    : $"program failed to execute ({outcome.err.Code}: {outcome.err.Message})";
+                messages.Add(new[] { "assistant", Solver.ParsedJson(parsed) });
+                messages.Add(new[] { "user", Solver.CorrectionPrompt(reason) });
+                var secondParsed = Solver.ParseModelReply(Call()); // second failure throws
+                var second = Attempt(secondParsed);
+                if (!second.ok) throw second.err; // PROGRAM_* error persisted after retry
+                parsed = secondParsed;
+                outcome = second;
+            }
+
+            return new Solver.SolveResult
+            {
+                Answer = outcome.answer,
+                Steps = parsed.Steps,
+                Program = parsed.Program,
+                Check = parsed.Check,
+                CheckValue = outcome.checkValue,
+                Verified = outcome.verified,
+                Retries = retries,
+            };
         }
 
         private static IEnumerable<object> ToAnonymous(List<string[]> messages)
