@@ -2,15 +2,20 @@ name: nuget release
 on:
   workflow_dispatch: {}
 jobs:
-  pack:
+  publish:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # GitHub OIDC token for NuGet trusted publishing
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: 8.0.x }
       - run: dotnet test tests/Mathsolver.Tests
       - run: dotnet pack src/Mathsolver -c Release -o dist
-      - uses: actions/upload-artifact@v4
+      - name: NuGet login (OIDC to temp API key)
+        uses: NuGet/login@v1
+        id: login
         with:
-          name: nupkg
-          path: dist/*.nupkg
+          user: hanterchen
+      - name: Push to nuget.org
+        run: dotnet nuget push "dist/*.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json
